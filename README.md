@@ -5,7 +5,7 @@ A simple authentication middleware for ComfyUI that adds basic HTTP authenticati
 ## Features
 
 - Basic HTTP Authentication protection for ComfyUI
-- Simple username/password configuration
+- Supports up to 3 username/password pairs for credential rotation
 - Lightweight and easy to set up
 - Compatible with all ComfyUI versions
 
@@ -29,6 +29,22 @@ Set environment variables for your username and password:
 export COMFYUI_USERNAME=your_username
 export COMFYUI_PASSWORD=your_password
 ```
+
+You can configure up to 3 username/password pairs. Any configured pair will be accepted:
+
+```bash
+export COMFYUI_USERNAME=primary_username
+export COMFYUI_PASSWORD=primary_password
+
+export COMFYUI_USERNAME_2=backup_username
+export COMFYUI_PASSWORD_2=backup_password
+
+export COMFYUI_USERNAME_3=rotation_username
+export COMFYUI_PASSWORD_3=rotation_password
+```
+
+Only complete pairs are used. For example, `COMFYUI_USERNAME_2` is ignored unless
+`COMFYUI_PASSWORD_2` is also set.
 
 Restart ComfyUI for the changes to take effect.
 

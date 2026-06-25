@@ -1,12 +1,35 @@
 import os
 import base64
+import hmac
 from aiohttp import web
 
 class BasicAuthMiddleware:
     def __init__(self):
-        self.username = os.getenv('COMFYUI_USERNAME', '')
-        self.password = os.getenv('COMFYUI_PASSWORD', '')
-        self.enabled = bool(self.username and self.password)
+        self.credentials = self._load_credentials()
+        self.enabled = bool(self.credentials)
+
+    def _load_credentials(self):
+        credential_keys = [
+            ('COMFYUI_USERNAME', 'COMFYUI_PASSWORD'),
+            ('COMFYUI_USERNAME_2', 'COMFYUI_PASSWORD_2'),
+            ('COMFYUI_USERNAME_3', 'COMFYUI_PASSWORD_3'),
+        ]
+        credentials = []
+
+        for username_key, password_key in credential_keys:
+            username = os.getenv(username_key, '')
+            password = os.getenv(password_key, '')
+            if username and password:
+                credentials.append((username, password))
+
+        return credentials
+
+    def _credentials_match(self, username, password):
+        return any(
+            hmac.compare_digest(username, valid_username)
+            and hmac.compare_digest(password, valid_password)
+            for valid_username, valid_password in self.credentials
+        )
 
     @web.middleware
     async def handle(self, request, handler):
@@ -34,7 +57,7 @@ class BasicAuthMiddleware:
             decoded = base64.b64decode(auth_string).decode('utf-8')
             provided_username, provided_password = decoded.split(':', 1)
 
-            if provided_username == self.username and provided_password == self.password:
+            if self._credentials_match(provided_username, provided_password):
                 return await handler(request)
 
         except Exception:
@@ -73,8 +96,13 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 # Register the middleware
 try:
     import server
-    app = server.PromptServer.instance.app
-    middleware = BasicAuthMiddleware()
-    app.middlewares.insert(0, middleware.handle)
-except Exception as e:
-    print(f"Failed to register basic auth middleware: {e}")
+except ModuleNotFoundError as e:
+    if e.name != 'server':
+        print(f"Failed to register basic auth middleware: {e}")
+else:
+    try:
+        app = server.PromptServer.instance.app
+        middleware = BasicAuthMiddleware()
+        app.middlewares.insert(0, middleware.handle)
+    except Exception as e:
+        print(f"Failed to register basic auth middleware: {e}")
