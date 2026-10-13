@@ -48,7 +48,7 @@ class BasicAuthMiddlewareTest(unittest.TestCase):
                     ("Bearer new-token", 200 if config.get("COMFYUI_TOKEN2") else 401),
                     ("Bearer wrong-token", 401),
                     ("Bearer ", 401),
-                    (basic_header("primary", "primary-pass"), 401),
+                    (basic_header("primary", "primary-pass"), 200 if with_basic_auth else 401),
                     (None, 401),
                 ]
                 for header_name in ("Authorization", "X-App-Authorization"):
@@ -62,10 +62,11 @@ class BasicAuthMiddlewareTest(unittest.TestCase):
                             if expected_status == 401:
                                 self.assertEqual(
                                     response.headers["WWW-Authenticate"],
-                                    'Bearer realm="ComfyUI Server"',
+                                    ('Basic realm="ComfyUI Server", ' if with_basic_auth else '')
+                                    + 'Bearer realm="ComfyUI Server"',
                                 )
 
-    def test_token_auth_takes_precedence_over_basic_auth(self):
+    def test_auth_scheme_selects_token_or_basic_validation(self):
         env = {
             "COMFYUI_TOKEN": "test-token",
             "COMFYUI_USERNAME": "primary",
@@ -79,7 +80,12 @@ class BasicAuthMiddlewareTest(unittest.TestCase):
             ("empty token", "Bearer ", 401),
             ("malformed header", "Bearer", 401),
             ("wrong scheme", "Token test-token", 401),
-            ("basic credentials", basic_header("primary", "primary-pass"), 401),
+            ("basic credentials", basic_header("primary", "primary-pass"), 200),
+            ("case insensitive basic", basic_header("primary", "primary-pass").replace("Basic ", "bAsIc ", 1), 200),
+            ("wrong basic password", basic_header("primary", "wrong-pass"), 401),
+            ("malformed basic", "Basic invalid", 401),
+            ("token as basic", "Basic test-token", 401),
+            ("basic as bearer", "Bearer " + basic_header("primary", "primary-pass").split(" ", 1)[1], 401),
             ("missing header", None, 401),
         ]
         with patch.dict(os.environ, env, clear=True):
@@ -94,8 +100,44 @@ class BasicAuthMiddlewareTest(unittest.TestCase):
                 if expected_status == 401:
                     self.assertEqual(
                         response.headers["WWW-Authenticate"],
-                        'Bearer realm="ComfyUI Server"',
+                        'Basic realm="ComfyUI Server", Bearer realm="ComfyUI Server"',
                     )
+
+    def test_bearer_is_rejected_when_only_basic_is_configured(self):
+        env = {"COMFYUI_USERNAME": "primary", "COMFYUI_PASSWORD": "primary-pass"}
+        with patch.dict(os.environ, env, clear=True):
+            middleware = BasicAuthMiddleware()
+        for header in ("Bearer test-token", "Bearer "):
+            with self.subTest(header=header):
+                request = SimpleNamespace(path="/", headers={"Authorization": header})
+                response = asyncio.run(middleware.handle(request, ok_handler))
+                self.assertEqual(response.status, 401)
+
+    def test_app_header_priority_with_both_auth_schemes(self):
+        env = {
+            "COMFYUI_TOKEN": "test-token",
+            "COMFYUI_USERNAME": "primary",
+            "COMFYUI_PASSWORD": "primary-pass",
+        }
+        basic = basic_header("primary", "primary-pass")
+        bearer = "Bearer test-token"
+        cases = [
+            (basic, "Bearer wrong-token", 200),
+            (bearer, basic_header("primary", "wrong-pass"), 200),
+            (basic_header("primary", "wrong-pass"), bearer, 401),
+            ("Bearer wrong-token", basic, 401),
+            ("", basic, 401),
+        ]
+        with patch.dict(os.environ, env, clear=True):
+            middleware = BasicAuthMiddleware()
+        for app_header, standard_header, expected_status in cases:
+            with self.subTest(app_header=app_header, standard_header=standard_header):
+                request = SimpleNamespace(path="/", headers=CIMultiDict({
+                    "X-App-Authorization": app_header,
+                    "Authorization": standard_header,
+                }))
+                response = asyncio.run(middleware.handle(request, ok_handler))
+                self.assertEqual(response.status, expected_status)
 
     def test_token_alone_enables_auth_and_preserves_header_priority(self):
         valid = "Bearer test-token"

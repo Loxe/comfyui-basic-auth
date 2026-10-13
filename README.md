@@ -5,7 +5,7 @@ A simple authentication middleware for ComfyUI that adds basic HTTP authenticati
 ## Features
 
 - Basic HTTP Authentication protection for ComfyUI
-- Optional Bearer token authentication via `COMFYUI_TOKEN` and `COMFYUI_TOKEN2` for rotation, taking priority over Basic Auth
+- Optional Bearer token authentication via `COMFYUI_TOKEN` and `COMFYUI_TOKEN2` for rotation, usable alongside Basic Auth
 - Supports up to 3 username/password pairs for credential rotation
 - Lightweight and easy to set up
 - Compatible with all ComfyUI versions
@@ -32,11 +32,14 @@ export COMFYUI_TOKEN2=your_next_token
 ```
 
 Either configured token is accepted, and either variable can be used on its own.
-Empty values are ignored. As long as at least one token is non-empty, only Bearer
-token authentication is accepted, even if username/password pairs are also
-configured. Invalid or missing tokens return HTTP 401; they do not fall back to
-Basic Auth. Only when both token variables are unset or empty does the
-username/password configuration below apply.
+Empty values are ignored. Basic Auth and Bearer authentication can be configured
+at the same time. The request header's scheme selects the validation method:
+`Bearer <token>` is checked against the configured tokens, while
+`Basic <base64(username:password)>` is checked against the configured
+username/password pairs. Scheme names are case-insensitive; token values are
+case-sensitive. When authentication is enabled, missing or invalid credentials,
+unsupported schemes, and schemes without configured credentials return HTTP 401.
+Failed validation does not fall back to the other method.
 
 To rotate tokens, add the new token in the other variable and restart ComfyUI.
 Once clients have switched to the new token, remove the old token and restart
@@ -81,7 +84,13 @@ modes, `X-App-Authorization` takes priority; `Authorization` is used only when
 `X-App-Authorization` is absent.
 
 With Basic Auth enabled, your browser will prompt for a configured username and
-password. If neither a non-empty token nor a complete username/password pair is
+password. You can also send Basic Auth explicitly, even when tokens are configured:
+
+```bash
+curl -u "$COMFYUI_USERNAME:$COMFYUI_PASSWORD" http://localhost:8188/
+```
+
+If neither a non-empty token nor a complete username/password pair is
 configured, authentication is disabled. The existing `/ws` authentication bypass
 applies in both modes.
 

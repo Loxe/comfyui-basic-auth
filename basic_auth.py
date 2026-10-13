@@ -46,8 +46,11 @@ class BasicAuthMiddleware:
         if request.path == '/ws':
             return await handler(request)
 
-        auth_scheme = 'Bearer' if self.tokens else 'Basic'
-        challenge = f'{auth_scheme} realm="ComfyUI Server"'
+        challenge = ', '.join(
+            f'{scheme} realm="ComfyUI Server"'
+            for scheme, configured in (('Basic', self.credentials), ('Bearer', self.tokens))
+            if configured
+        )
 
         # Prefer the app-specific header; fall back only when it is absent.
         auth_header = request.headers.get('X-App-Authorization')
@@ -62,18 +65,19 @@ class BasicAuthMiddleware:
 
         try:
             auth_type, auth_string = auth_header.split(' ', 1)
-            if auth_type.lower() != auth_scheme.lower():
-                raise ValueError('Invalid auth type')
+            auth_type = auth_type.lower()
 
-            if self.tokens:
+            if auth_type == 'bearer':
                 authenticated = any(
                     hmac.compare_digest(auth_string.encode('utf-8'), token.encode('utf-8'))
                     for token in self.tokens
                 )
-            else:
+            elif auth_type == 'basic':
                 decoded = base64.b64decode(auth_string).decode('utf-8')
                 provided_username, provided_password = decoded.split(':', 1)
                 authenticated = self._credentials_match(provided_username, provided_password)
+            else:
+                raise ValueError('Invalid auth type')
 
             if authenticated:
                 return await handler(request)
