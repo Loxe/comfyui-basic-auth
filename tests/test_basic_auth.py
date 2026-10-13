@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from aiohttp import web
+from multidict import CIMultiDict
 
 from basic_auth import BasicAuthMiddleware
 
@@ -28,6 +29,38 @@ def run_auth(middleware, username, password):
 
 
 class BasicAuthMiddlewareTest(unittest.TestCase):
+    def test_authorization_header_selection(self):
+        env = {
+            "COMFYUI_USERNAME": "primary",
+            "COMFYUI_PASSWORD": "primary-pass",
+        }
+        valid = basic_header("primary", "primary-pass")
+        invalid = basic_header("primary", "wrong-pass")
+        cases = [
+            ("standard header", {"Authorization": valid}, 200),
+            ("app header", {"X-App-Authorization": valid}, 200),
+            ("app header wins", {"X-App-Authorization": valid, "Authorization": invalid}, 200),
+            ("invalid app credentials", {"X-App-Authorization": invalid, "Authorization": valid}, 401),
+            ("malformed app header", {"X-App-Authorization": "invalid", "Authorization": valid}, 401),
+            ("empty app header", {"X-App-Authorization": "", "Authorization": valid}, 401),
+            ("case insensitive", {"x-app-authorization": valid}, 200),
+            ("missing headers", {}, 401),
+        ]
+
+        with patch.dict(os.environ, env, clear=True):
+            middleware = BasicAuthMiddleware()
+
+        for name, headers, expected_status in cases:
+            with self.subTest(name=name):
+                request = SimpleNamespace(path="/", headers=CIMultiDict(headers))
+                response = asyncio.run(middleware.handle(request, ok_handler))
+                self.assertEqual(response.status, expected_status)
+                if expected_status == 401:
+                    self.assertEqual(
+                        response.headers["WWW-Authenticate"],
+                        'Basic realm="ComfyUI Server"',
+                    )
+
     def test_accepts_any_configured_credential_pair(self):
         env = {
             "COMFYUI_USERNAME": "primary",

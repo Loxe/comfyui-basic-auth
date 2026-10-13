@@ -40,8 +40,10 @@ class BasicAuthMiddleware:
         if request.path == '/ws':
             return await handler(request)
 
-        # Get Authorization header
-        auth_header = request.headers.get('Authorization')
+        # Prefer the app-specific header; fall back only when it is absent.
+        auth_header = request.headers.get('X-App-Authorization')
+        if auth_header is None:
+            auth_header = request.headers.get('Authorization')
 
         if not auth_header:
             return web.Response(
