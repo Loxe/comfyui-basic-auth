@@ -1,0 +1,15 @@
+services:
+  nginx:
+    image: nginx:stable-alpine
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8080}:80"
+    environment:
+      UPSTREAM_SCHEME: "${UPSTREAM_SCHEME:-https}"
+      UPSTREAM_HOST: "${UPSTREAM_HOST:?Set UPSTREAM_HOST in .env}"
+      UPSTREAM_PORT: "${UPSTREAM_PORT:-443}"
+      UPSTREAM_TOKEN: "${UPSTREAM_TOKEN:?Set UPSTREAM_TOKEN in .env}"
+      NGINX_ENVSUBST_FILTER: "^UPSTREAM_"
+    volumes:
+      - ./templates/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

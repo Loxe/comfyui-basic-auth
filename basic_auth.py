@@ -5,8 +5,14 @@ from aiohttp import web
 
 class BasicAuthMiddleware:
     def __init__(self):
+        self.tokens = [
+            token for token in (
+                os.getenv('COMFYUI_TOKEN', ''),
+                os.getenv('COMFYUI_TOKEN2', ''),
+            ) if token
+        ]
         self.credentials = self._load_credentials()
-        self.enabled = bool(self.credentials)
+        self.enabled = bool(self.tokens or self.credentials)
 
     def _load_credentials(self):
         credential_keys = [
@@ -40,6 +46,9 @@ class BasicAuthMiddleware:
         if request.path == '/ws':
             return await handler(request)
 
+        auth_scheme = 'Bearer' if self.tokens else 'Basic'
+        challenge = f'{auth_scheme} realm="ComfyUI Server"'
+
         # Prefer the app-specific header; fall back only when it is absent.
         auth_header = request.headers.get('X-App-Authorization')
         if auth_header is None:
@@ -48,18 +57,25 @@ class BasicAuthMiddleware:
         if not auth_header:
             return web.Response(
                 status=401,
-                headers={'WWW-Authenticate': 'Basic realm="ComfyUI Server"'}
+                headers={'WWW-Authenticate': challenge}
             )
 
         try:
             auth_type, auth_string = auth_header.split(' ', 1)
-            if auth_type.lower() != 'basic':
+            if auth_type.lower() != auth_scheme.lower():
                 raise ValueError('Invalid auth type')
 
-            decoded = base64.b64decode(auth_string).decode('utf-8')
-            provided_username, provided_password = decoded.split(':', 1)
+            if self.tokens:
+                authenticated = any(
+                    hmac.compare_digest(auth_string.encode('utf-8'), token.encode('utf-8'))
+                    for token in self.tokens
+                )
+            else:
+                decoded = base64.b64decode(auth_string).decode('utf-8')
+                provided_username, provided_password = decoded.split(':', 1)
+                authenticated = self._credentials_match(provided_username, provided_password)
 
-            if self._credentials_match(provided_username, provided_password):
+            if authenticated:
                 return await handler(request)
 
         except Exception:
@@ -67,7 +83,7 @@ class BasicAuthMiddleware:
 
         return web.Response(
             status=401,
-            headers={'WWW-Authenticate': 'Basic realm="ComfyUI Server"'}
+            headers={'WWW-Authenticate': challenge}
         )
 
 class BasicAuthSetup:

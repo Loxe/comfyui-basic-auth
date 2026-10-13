@@ -5,6 +5,7 @@ A simple authentication middleware for ComfyUI that adds basic HTTP authenticati
 ## Features
 
 - Basic HTTP Authentication protection for ComfyUI
+- Optional Bearer token authentication via `COMFYUI_TOKEN` and `COMFYUI_TOKEN2` for rotation, taking priority over Basic Auth
 - Supports up to 3 username/password pairs for credential rotation
 - Lightweight and easy to set up
 - Compatible with all ComfyUI versions
@@ -22,6 +23,24 @@ git clone https://github.com/fofr/comfyui-basic-auth
 ```
 
 ## Configuration
+
+To use token authentication, set a non-empty `COMFYUI_TOKEN` or `COMFYUI_TOKEN2`:
+
+```bash
+export COMFYUI_TOKEN=your_token
+export COMFYUI_TOKEN2=your_next_token
+```
+
+Either configured token is accepted, and either variable can be used on its own.
+Empty values are ignored. As long as at least one token is non-empty, only Bearer
+token authentication is accepted, even if username/password pairs are also
+configured. Invalid or missing tokens return HTTP 401; they do not fall back to
+Basic Auth. Only when both token variables are unset or empty does the
+username/password configuration below apply.
+
+To rotate tokens, add the new token in the other variable and restart ComfyUI.
+Once clients have switched to the new token, remove the old token and restart
+again. Both tokens are accepted during the transition.
 
 Set environment variables for your username and password:
 
@@ -50,7 +69,21 @@ Restart ComfyUI for the changes to take effect.
 
 ## Usage
 
-The authentication will automatically be active once the node is installed and configured. When accessing ComfyUI, you will be prompted for the username and password you specified in the environment variables.
+The authentication will automatically be active once the node is installed and configured.
+With token authentication enabled, send `Authorization: Bearer <token>`:
+
+```bash
+curl -H "Authorization: Bearer $COMFYUI_TOKEN" http://localhost:8188/
+```
+
+You can also use `X-App-Authorization: Bearer <token>`. For both authentication
+modes, `X-App-Authorization` takes priority; `Authorization` is used only when
+`X-App-Authorization` is absent.
+
+With Basic Auth enabled, your browser will prompt for a configured username and
+password. If neither a non-empty token nor a complete username/password pair is
+configured, authentication is disabled. The existing `/ws` authentication bypass
+applies in both modes.
 
 ## Security Note
 
