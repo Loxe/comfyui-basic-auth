@@ -29,6 +29,64 @@ def run_auth(middleware, username, password):
 
 
 class BasicAuthMiddlewareTest(unittest.TestCase):
+    def test_request_trace_covers_auth_paths_without_exposing_secrets(self):
+        env = {
+            "COMFYUI_TOKEN": "secret-token",
+            "COMFYUI_USERNAME": "private-user",
+            "COMFYUI_PASSWORD": "private-password",
+        }
+        basic = basic_header("private-user", "private-password")
+        cases = [
+            (env, "/prompt", {"X-App-Authorization": "Bearer secret-token"},
+             ["header=X-App-Authorization", "scheme=bearer", "auth=accepted", "handler=enter", "handler=exit status=200"]),
+            (env, "/prompt", {"Authorization": basic},
+             ["header=Authorization", "scheme=basic", "auth=accepted", "handler=enter", "handler=exit status=200"]),
+            (env, "/prompt", {}, ["reason=missing_header status=401"]),
+            (env, "/prompt", {"Authorization": "Bearer wrong-secret"}, ["reason=invalid_credentials status=401"]),
+            (env, "/prompt", {"Authorization": "Basic invalid"}, ["reason=malformed_header", "status=401"]),
+            (env, "/prompt", {"Authorization": "secret-scheme secret-token"}, ["reason=unsupported_scheme", "status=401"]),
+            (env, "/ws", {}, ["reason=websocket", "handler=enter", "handler=exit status=200"]),
+            ({}, "/prompt", {}, ["reason=disabled", "handler=enter", "handler=exit status=200"]),
+        ]
+        request_ids = set()
+        for config, path, headers, expected in cases:
+            with self.subTest(path=path, expected=expected):
+                with patch.dict(os.environ, config, clear=True):
+                    middleware = BasicAuthMiddleware()
+                request = SimpleNamespace(method="POST", path=path, headers=headers,
+                                          query_string="token=query-secret")
+                with self.assertLogs("basic_auth", level="INFO") as captured:
+                    response = asyncio.run(middleware.handle(request, ok_handler))
+                messages = [record.getMessage() for record in captured.records]
+                trace = "\n".join(messages)
+                self.assertIn(f"request=enter method=POST path='{path}'", trace)
+                positions = [trace.index(fragment) for fragment in expected]
+                self.assertEqual(positions, sorted(positions))
+                ids = {message.split("]", 1)[0] for message in messages}
+                self.assertEqual(len(ids), 1)
+                self.assertTrue(request_ids.isdisjoint(ids))
+                request_ids.update(ids)
+                for secret in ("secret-token", "private-user", "private-password", basic,
+                               "query-secret", "wrong-secret", "secret-scheme"):
+                    self.assertNotIn(secret, trace)
+                if response.status == 401:
+                    self.assertNotIn("handler=enter", trace)
+
+    def test_handler_failure_is_logged_without_exception_message(self):
+        with patch.dict(os.environ, {}, clear=True):
+            middleware = BasicAuthMiddleware()
+        request = SimpleNamespace(method="GET", path="/", headers={})
+
+        async def failing_handler(request):
+            raise RuntimeError("sensitive-error-detail")
+
+        with self.assertLogs("basic_auth", level="INFO") as captured:
+            with self.assertRaises(RuntimeError):
+                asyncio.run(middleware.handle(request, failing_handler))
+        trace = "\n".join(captured.output)
+        self.assertIn("handler=error error=RuntimeError", trace)
+        self.assertNotIn("sensitive-error-detail", trace)
+
     def test_token_rotation_accepts_only_currently_configured_tokens(self):
         configurations = [
             {"COMFYUI_TOKEN": "old-token", "COMFYUI_TOKEN2": "new-token"},
